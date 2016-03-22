@@ -52,7 +52,8 @@ namespace SteamAuth
         /// </summary>
         [JsonProperty("fully_enrolled")]
         public bool FullyEnrolled { get; set; }
-        
+
+        [NonSerialized]
         private SessionData session;
         public SessionData Session
         {
