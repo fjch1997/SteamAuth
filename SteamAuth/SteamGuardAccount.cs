@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using System.Web;
 
 namespace SteamAuth
 {
@@ -138,7 +139,46 @@ namespace SteamAuth
             this.Session.AddCookies(cookies);
 
             string response = SteamWeb.Request(url, "GET", "", cookies);
-            return FetchConfirmationInternal(response);
+
+            /*So you're going to see this abomination and you're going to be upset.
+              It's understandable. But the thing is, regex for HTML -- while awful -- makes this way faster than parsing a DOM, plus we don't need another library.
+              And because the data is always in the same place and same format... It's not as if we're trying to naturally understand HTML here. Just extract strings.
+              I'm sorry. */
+
+            Regex confIDRegex = new Regex("data-confid=\"(\\d+)\"");
+            Regex confKeyRegex = new Regex("data-key=\"(\\d+)\"");
+            Regex confDescRegex = new Regex("<div>((Confirm|Trade with|Sell -) .+)</div>");
+
+            if (response == null || !(confIDRegex.IsMatch(response) && confKeyRegex.IsMatch(response) && confDescRegex.IsMatch(response)))
+            {
+                if (response == null || !response.Contains("<div>Nothing to confirm</div>"))
+                {
+                    throw new WGTokenInvalidException();
+                }
+
+                return new Confirmation[0];
+            }
+
+            MatchCollection confIDs = confIDRegex.Matches(response);
+            MatchCollection confKeys = confKeyRegex.Matches(response);
+            MatchCollection confDescs = confDescRegex.Matches(response);
+
+            List<Confirmation> ret = new List<Confirmation>();
+            for (int i = 0; i < confIDs.Count; i++)
+            {
+                string confID = confIDs[i].Groups[1].Value;
+                string confKey = confKeys[i].Groups[1].Value;
+                string confDesc = HttpUtility.UrlDecode(confDescs[i].Groups[1].Value);
+                Confirmation conf = new Confirmation()
+                {
+                    Description = confDesc,
+                    ID = confID,
+                    Key = confKey
+                };
+                ret.Add(conf);
+            }
+
+            return ret.ToArray();
         }
 
         public async Task<Confirmation[]> FetchConfirmationsAsync()
@@ -149,20 +189,16 @@ namespace SteamAuth
             this.Session.AddCookies(cookies);
 
             string response = await SteamWeb.RequestAsync(url, "GET", null, cookies);
-            return FetchConfirmationInternal(response);
-        }
-
-        private Confirmation[] FetchConfirmationInternal(string response)
-        {
 
             /*So you're going to see this abomination and you're going to be upset.
               It's understandable. But the thing is, regex for HTML -- while awful -- makes this way faster than parsing a DOM, plus we don't need another library.
               And because the data is always in the same place and same format... It's not as if we're trying to naturally understand HTML here. Just extract strings.
               I'm sorry. */
 
-            Regex confRegex = new Regex("<div class=\"mobileconf_list_entry\" id=\"conf[0-9]+\" data-confid=\"(\\d+)\" data-key=\"(\\d+)\" data-type=\"(\\d+)\" data-creator=\"(\\d+)\"");
+            Regex confIDKeyRegex = new Regex("<div class=\"mobileconf_list_entry\" id=\"conf\\d+\" data-confid=\"(\\d+)\" data-key=\"(\\d+)\"");
+            Regex confDescRegex = new Regex("<div>((Confirm|Trade with|Sell -) .+)</div>");
 
-            if (response == null || !confRegex.IsMatch(response))
+            if (response == null || !(confIDKeyRegex.IsMatch(response) && confDescRegex.IsMatch(response)))
             {
                 if (response == null || !response.Contains("<div>Nothing to confirm</div>"))
                 {
@@ -172,38 +208,35 @@ namespace SteamAuth
                 return new Confirmation[0];
             }
 
-            MatchCollection confirmations = confRegex.Matches(response);
+            MatchCollection confIDKeys = confIDKeyRegex.Matches(response);
+            MatchCollection confDescs = confDescRegex.Matches(response);
 
             List<Confirmation> ret = new List<Confirmation>();
-            foreach (Match confirmation in confirmations)
+            for (int i = 0; i < confIDKeys.Count; i++)
             {
-                if (confirmation.Groups.Count != 5) continue;
-
-                if (!ulong.TryParse(confirmation.Groups[1].Value, out ulong confID) ||
-                    !ulong.TryParse(confirmation.Groups[2].Value, out ulong confKey) ||
-                    !int.TryParse(confirmation.Groups[3].Value, out int confType) ||
-                    !ulong.TryParse(confirmation.Groups[4].Value, out ulong confCreator))
+                string confID = confIDKeys[i].Groups[1].Value;
+                string confKey = confIDKeys[i].Groups[2].Value;
+                string confDesc = confDescs[i].Groups[1].Value;
+                Confirmation conf = new Confirmation()
                 {
-                    continue;
-                }
-
-                ret.Add(new Confirmation(confID, confKey, confType, confCreator));
+                    Description = confDesc,
+                    ID = confID,
+                    Key = confKey
+                };
+                ret.Add(conf);
             }
 
             return ret.ToArray();
         }
 
-        /// <summary>
-        /// Deprecated. Simply returns conf.Creator.
-        /// </summary>
-        /// <param name="conf"></param>
-        /// <returns>The Creator field of conf</returns>
         public long GetConfirmationTradeOfferID(Confirmation conf)
         {
-            if (conf.ConfType != Confirmation.ConfirmationType.Trade)
-                throw new ArgumentException("conf must be a trade confirmation.");
+            var confDetails = _getConfirmationDetails(conf);
+            if (confDetails == null || !confDetails.Success) return -1;
 
-            return (long)conf.Creator;
+            Regex tradeOfferIDRegex = new Regex("<div class=\"tradeoffer\" id=\"tradeofferid_(\\d+)\" >");
+            if (!tradeOfferIDRegex.IsMatch(confDetails.HTML)) return -1;
+            return long.Parse(tradeOfferIDRegex.Match(confDetails.HTML).Groups[1].Value);
         }
 
         public bool AcceptMultipleConfirmations(Confirmation[] confs)
