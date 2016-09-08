@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Web;
+using System.Linq;
 
 namespace SteamAuth
 {
@@ -174,21 +175,18 @@ namespace SteamAuth
                 return new Confirmation[0];
             }
 
-            MatchCollection confIDs = confIDRegex.Matches(response);
-            MatchCollection confKeys = confKeyRegex.Matches(response);
-            MatchCollection confDescs = confDescRegex.Matches(response);
+            var confIDs = confIDRegex.Matches(response).Cast<Match>().Select(m => m.Groups[1].Value).Distinct().ToArray();
+            var confKeys = confKeyRegex.Matches(response).Cast<Match>().Select(m => m.Groups[1].Value).Distinct().ToArray();
+            var confDescs = confDescRegex.Matches(response).Cast<Match>().Select(m => m.Groups[1].Value).Distinct().ToArray();
 
             List<Confirmation> ret = new List<Confirmation>();
-            for (int i = 0; i < confIDs.Count; i++)
+            for (int i = 0; i < confIDs.Length; i++)
             {
-                string confID = confIDs[i].Groups[1].Value;
-                string confKey = confKeys[i].Groups[1].Value;
-                string confDesc = System.Web.HttpUtility.HtmlDecode(confDescs[i].Groups[1].Value);
                 Confirmation conf = new Confirmation()
                 {
-                    Description = confDesc,
-                    ID = confID,
-                    Key = confKey
+                    Description = System.Web.HttpUtility.HtmlDecode(confDescs[i]),
+                    ID = confIDs[i],
+                    Key = confKeys[i]
                 };
                 ret.Add(conf);
             }
