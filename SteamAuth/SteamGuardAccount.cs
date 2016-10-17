@@ -9,6 +9,7 @@ using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Web;
 using System.Linq;
+using System.Diagnostics;
 
 namespace SteamAuth
 {
@@ -62,6 +63,7 @@ namespace SteamAuth
         }
         
         private static byte[] steamGuardCodeTranslations = new byte[] { 50, 51, 52, 53, 54, 55, 56, 57, 66, 67, 68, 70, 71, 72, 74, 75, 77, 78, 80, 81, 82, 84, 86, 87, 88, 89 };
+        private static TraceSource trace = new TraceSource(nameof(SteamAuth));
 
         public bool DeactivateAuthenticator(int scheme = 2)
         {
@@ -124,9 +126,10 @@ namespace SteamAuth
                     codePoint /= steamGuardCodeTranslations.Length;
                 }
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                return null; //Change later, catch-alls are bad!
+                trace.TraceEvent(TraceEventType.Error, 1, "GenerateSteamGuardCodeForTime(long)\r\n\r\n" + ex.ToString());
+                return null;
             }
             return Encoding.UTF8.GetString(codeArray);
         }
@@ -160,38 +163,45 @@ namespace SteamAuth
               It's understandable. But the thing is, regex for HTML -- while awful -- makes this way faster than parsing a DOM, plus we don't need another library.
               And because the data is always in the same place and same format... It's not as if we're trying to naturally understand HTML here. Just extract strings.
               I'm sorry. */
-
-            Regex confIDRegex = new Regex("data-confid=\"(\\d+)\"");
-            Regex confKeyRegex = new Regex("data-key=\"(\\d+)\"");
-            Regex confDescRegex = new Regex("<div>((Confirm|Trade with|Sell -) .+)</div>");
-
-            if (response == null || !(confIDRegex.IsMatch(response) && confKeyRegex.IsMatch(response) && confDescRegex.IsMatch(response)))
+            try
             {
-                if (response == null || !response.Contains("<div>Nothing to confirm</div>"))
+                Regex confIDRegex = new Regex("data-confid=\"(\\d+)\"");
+                Regex confKeyRegex = new Regex("data-key=\"(\\d+)\"");
+                Regex confDescRegex = new Regex("<div>((Confirm|Trade with|Sell -) .+)</div>");
+
+                if (response == null || !(confIDRegex.IsMatch(response) && confKeyRegex.IsMatch(response) && confDescRegex.IsMatch(response)))
                 {
-                    throw new WGTokenInvalidException();
+                    if (response == null || !response.Contains("<div>Nothing to confirm</div>"))
+                    {
+                        throw new WGTokenInvalidException();
+                    }
+
+                    return new Confirmation[0];
                 }
 
-                return new Confirmation[0];
-            }
+                var confIDs = confIDRegex.Matches(response).Cast<Match>().Select(m => m.Groups[1].Value).Distinct().ToArray();
+                var confKeys = confKeyRegex.Matches(response).Cast<Match>().Select(m => m.Groups[1].Value).Distinct().ToArray();
+                var confDescs = confDescRegex.Matches(response).Cast<Match>().Select(m => m.Groups[1].Value).Distinct().ToArray();
 
-            var confIDs = confIDRegex.Matches(response).Cast<Match>().Select(m => m.Groups[1].Value).Distinct().ToArray();
-            var confKeys = confKeyRegex.Matches(response).Cast<Match>().Select(m => m.Groups[1].Value).Distinct().ToArray();
-            var confDescs = confDescRegex.Matches(response).Cast<Match>().Select(m => m.Groups[1].Value).Distinct().ToArray();
-
-            List<Confirmation> ret = new List<Confirmation>();
-            for (int i = 0; i < confIDs.Length; i++)
-            {
-                Confirmation conf = new Confirmation()
+                List<Confirmation> ret = new List<Confirmation>();
+                for (int i = 0; i < confIDs.Length; i++)
                 {
-                    Description = System.Web.HttpUtility.HtmlDecode(confDescs[i]),
-                    ID = confIDs[i],
-                    Key = confKeys[i]
-                };
-                ret.Add(conf);
-            }
+                    Confirmation conf = new Confirmation()
+                    {
+                        Description = System.Web.HttpUtility.HtmlDecode(confDescs[i]),
+                        ID = confIDs[i],
+                        Key = confKeys[i]
+                    };
+                    ret.Add(conf);
+                }
 
-            return ret.ToArray();
+                return ret.ToArray();
+            }
+            catch(Exception ex)
+            {
+                trace.TraceEvent(TraceEventType.Error, 2, "Error parsing server response when fecthing confirmations.\r\n\r\nOriginal server response is: \r\n\r\n" + response + "\r\n\r\nException details: \r\n\r\n" + ex.ToString());
+                throw;
+            }
         }
 
         public long GetConfirmationTradeOfferID(Confirmation conf)
@@ -259,8 +269,9 @@ namespace SteamAuth
                 this.Session.SteamLoginSecure = tokenSecure;
                 return true;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                trace.TraceEvent(TraceEventType.Error, 3, "Error refreshing session. Original server response is: \r\n\r\n" + response + "\r\n\r\nException details: \r\n\r\n" + ex.Message);
                 return false;
             }
         }
@@ -300,8 +311,9 @@ namespace SteamAuth
                 this.Session.SteamLoginSecure = tokenSecure;
                 return true;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                trace.TraceEvent(TraceEventType.Error, 3, "Error refreshing session. Original server response is: \r\n\r\n" + response + "\r\n\r\nException details: \r\n\r\n" + ex.Message);
                 return false;
             }
         }
