@@ -1,0 +1,17 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<package xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd">
+  <metadata>
+    <id>SteamAuth</id>
+    <version>$version$</version>
+    <authors>The SteamAuth Authors</authors>
+    <owners>The SteamAuth Authors</owners>
+    <projectUrl>https://github.com/geel9/SteamAuth</projectUrl>
+    <licenseUrl>https://github.com/geel9/SteamAuth/blob/master/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>A C# library that provides vital Steam Mobile Authenticator functionality.</description>
+    <copyright>Copyright © 2016 The SteamAuth Authors</copyright>
+    <dependencies>
+      <dependency id="Newtonsoft.Json" version="7.0.1" />
+    </dependencies>
+  </metadata>
+</package>
