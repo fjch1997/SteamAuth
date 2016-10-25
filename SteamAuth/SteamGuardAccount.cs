@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using System.Web;
 using System.Linq;
 using System.Diagnostics;
+using HtmlAgilityPack;
 
 namespace SteamAuth
 {
@@ -165,34 +166,22 @@ namespace SteamAuth
               I'm sorry. */
             try
             {
-                Regex confIDRegex = new Regex("data-confid=\"(\\d+)\"");
-                Regex confKeyRegex = new Regex("data-key=\"(\\d+)\"");
-                Regex confDescRegex = new Regex("<div>((Confirm|Trade with|Sell -) .+)</div>");
-
-                if (response == null || !(confIDRegex.IsMatch(response) && confKeyRegex.IsMatch(response) && confDescRegex.IsMatch(response)))
+                if(response == null)
+                    throw new WGTokenInvalidException();
+                var document = new HtmlDocument();
+                document.LoadHtml(response);
+                var confirmationNodes = document.DocumentNode.Descendants("div").Where(d => d.GetAttributeValue("class", "") == "mobileconf_list_entry").ToArray();
+                if(confirmationNodes.Length == 0 && !response.Contains("<div>Nothing to confirm</div>"))
+                    throw new WGTokenInvalidException();
+                var ret = new Confirmation[confirmationNodes.Length];
+                for (int i = 0; i < confirmationNodes.Length; i++)
                 {
-                    if (response == null || !response.Contains("<div>Nothing to confirm</div>"))
-                    {
-                        throw new WGTokenInvalidException();
-                    }
-
-                    return new Confirmation[0];
-                }
-
-                var confIDs = confIDRegex.Matches(response).Cast<Match>().Select(m => m.Groups[1].Value).Distinct().ToArray();
-                var confKeys = confKeyRegex.Matches(response).Cast<Match>().Select(m => m.Groups[1].Value).Distinct().ToArray();
-                var confDescs = confDescRegex.Matches(response).Cast<Match>().Select(m => m.Groups[1].Value).Distinct().ToArray();
-
-                List<Confirmation> ret = new List<Confirmation>();
-                for (int i = 0; i < confIDs.Length; i++)
-                {
-                    Confirmation conf = new Confirmation()
-                    {
-                        Description = System.Web.HttpUtility.HtmlDecode(confDescs[i]),
-                        ID = confIDs[i],
-                        Key = confKeys[i]
-                    };
-                    ret.Add(conf);
+                    var node = confirmationNodes[i];
+                    var confirmation = new Confirmation();
+                    confirmation.ID = node.Attributes["data-confid"].Value;
+                    confirmation.Key = node.Attributes["data-key"].Value;
+                    confirmation.Description = node.Descendants("div").Where(d => d.GetAttributeValue("class", "") == "mobileconf_list_entry_description").First().ChildNodes[1].InnerText;
+                    ret[i] = confirmation;
                 }
 
                 return ret.ToArray();
