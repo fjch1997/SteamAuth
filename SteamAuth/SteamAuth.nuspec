@@ -14,4 +14,8 @@
       <dependency id="Newtonsoft.Json" version="7.0.1" />
     </dependencies>
   </metadata>
+  <files>
+    <file src="bin\Release\SteamAuth.dll" target="lib\net452"/>
+    <file src="bin\Release\SteamAuth.pdb" target="lib\net452"/>
+  </files>
 </package>
