@@ -7,14 +7,9 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-using System.Web;
-using System.Linq;
-using System.Diagnostics;
-using HtmlAgilityPack;
 
 namespace SteamAuth
 {
-    [Serializable]
     public class SteamGuardAccount
     {
         [JsonProperty("shared_secret")]
@@ -55,16 +50,10 @@ namespace SteamAuth
         /// </summary>
         [JsonProperty("fully_enrolled")]
         public bool FullyEnrolled { get; set; }
-        
-        private SessionData session;
-        public SessionData Session
-        {
-            get { return session; }
-            set { session = value; }
-        }
-        
+
+        public SessionData Session { get; set; }
+
         private static byte[] steamGuardCodeTranslations = new byte[] { 50, 51, 52, 53, 54, 55, 56, 57, 66, 67, 68, 70, 71, 72, 74, 75, 77, 78, 80, 81, 82, 84, 86, 87, 88, 89 };
-        private static TraceSource trace = new TraceSource(nameof(SteamAuth));
 
         public bool DeactivateAuthenticator(int scheme = 2)
         {
@@ -127,10 +116,9 @@ namespace SteamAuth
                     codePoint /= steamGuardCodeTranslations.Length;
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                trace.TraceEvent(TraceEventType.Error, 1, "GenerateSteamGuardCodeForTime(long)\r\n\r\n" + ex.ToString());
-                return null;
+                return null; //Change later, catch-alls are bad!
             }
             return Encoding.UTF8.GetString(codeArray);
         }
@@ -154,53 +142,61 @@ namespace SteamAuth
             this.Session.AddCookies(cookies);
 
             string response = await SteamWeb.RequestAsync(url, "GET", null, cookies);
-
             return FetchConfirmationInternal(response);
         }
 
-        public Confirmation[] FetchConfirmationInternal(string response)
+        private Confirmation[] FetchConfirmationInternal(string response)
         {
+
             /*So you're going to see this abomination and you're going to be upset.
               It's understandable. But the thing is, regex for HTML -- while awful -- makes this way faster than parsing a DOM, plus we don't need another library.
               And because the data is always in the same place and same format... It's not as if we're trying to naturally understand HTML here. Just extract strings.
               I'm sorry. */
-            try
+
+            Regex confRegex = new Regex("<div class=\"mobileconf_list_entry\" id=\"conf[0-9]+\" data-confid=\"(\\d+)\" data-key=\"(\\d+)\" data-type=\"(\\d+)\" data-creator=\"(\\d+)\"");
+
+            if (response == null || !confRegex.IsMatch(response))
             {
-                if(response == null)
-                    throw new WGTokenInvalidException();
-                var document = new HtmlDocument();
-                document.LoadHtml(response);
-                var confirmationNodes = document.DocumentNode.Descendants("div").Where(d => d.GetAttributeValue("class", "") == "mobileconf_list_entry").ToArray();
-                if(confirmationNodes.Length == 0 && !response.Contains("<div>Nothing to confirm</div>"))
-                    throw new WGTokenInvalidException();
-                var ret = new Confirmation[confirmationNodes.Length];
-                for (int i = 0; i < confirmationNodes.Length; i++)
+                if (response == null || !response.Contains("<div>Nothing to confirm</div>"))
                 {
-                    var node = confirmationNodes[i];
-                    var confirmation = new Confirmation();
-                    confirmation.ID = node.Attributes["data-confid"].Value;
-                    confirmation.Key = node.Attributes["data-key"].Value;
-                    confirmation.Description = node.Descendants("div").Where(d => d.GetAttributeValue("class", "") == "mobileconf_list_entry_description").First().ChildNodes[1].InnerText;
-                    ret[i] = confirmation;
+                    throw new WGTokenInvalidException();
                 }
 
-                return ret.ToArray();
+                return new Confirmation[0];
             }
-            catch(Exception ex)
+
+            MatchCollection confirmations = confRegex.Matches(response);
+
+            List<Confirmation> ret = new List<Confirmation>();
+            foreach (Match confirmation in confirmations)
             {
-                trace.TraceEvent(TraceEventType.Error, 2, "Error parsing server response when fecthing confirmations.\r\n\r\nOriginal server response is: \r\n\r\n" + response + "\r\n\r\nException details: \r\n\r\n" + ex.ToString());
-                throw;
+                if (confirmation.Groups.Count != 5) continue;
+
+                if (!ulong.TryParse(confirmation.Groups[1].Value, out ulong confID) ||
+                    !ulong.TryParse(confirmation.Groups[2].Value, out ulong confKey) ||
+                    !int.TryParse(confirmation.Groups[3].Value, out int confType) ||
+                    !ulong.TryParse(confirmation.Groups[4].Value, out ulong confCreator))
+                {
+                    continue;
+                }
+
+                ret.Add(new Confirmation(confID, confKey, confType, confCreator));
             }
+
+            return ret.ToArray();
         }
 
+        /// <summary>
+        /// Deprecated. Simply returns conf.Creator.
+        /// </summary>
+        /// <param name="conf"></param>
+        /// <returns>The Creator field of conf</returns>
         public long GetConfirmationTradeOfferID(Confirmation conf)
         {
-            var confDetails = _getConfirmationDetails(conf);
-            if (confDetails == null || !confDetails.Success) return -1;
+            if (conf.ConfType != Confirmation.ConfirmationType.Trade)
+                throw new ArgumentException("conf must be a trade confirmation.");
 
-            Regex tradeOfferIDRegex = new Regex("<div class=\"tradeoffer\" id=\"tradeofferid_(\\d+)\" >");
-            if (!tradeOfferIDRegex.IsMatch(confDetails.HTML)) return -1;
-            return long.Parse(tradeOfferIDRegex.Match(confDetails.HTML).Groups[1].Value);
+            return (long)conf.Creator;
         }
 
         public bool AcceptMultipleConfirmations(Confirmation[] confs)
@@ -258,9 +254,8 @@ namespace SteamAuth
                 this.Session.SteamLoginSecure = tokenSecure;
                 return true;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                trace.TraceEvent(TraceEventType.Error, 3, "Error refreshing session. Original server response is: \r\n\r\n" + response + "\r\n\r\nException details: \r\n\r\n" + ex.Message);
                 return false;
             }
         }
@@ -300,9 +295,8 @@ namespace SteamAuth
                 this.Session.SteamLoginSecure = tokenSecure;
                 return true;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                trace.TraceEvent(TraceEventType.Error, 3, "Error refreshing session. Original server response is: \r\n\r\n" + response + "\r\n\r\nException details: \r\n\r\n" + ex.Message);
                 return false;
             }
         }
